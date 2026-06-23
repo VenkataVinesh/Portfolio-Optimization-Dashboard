@@ -1,30 +1,30 @@
-# Portfolio Optimization Dashboard
+# Portfolio Optimization
 
-A Python project implementing Markowitz Mean-Variance Portfolio Optimization and Sharpe Ratio Maximization, built using SciPy and Pandas.
+![Python](https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white)
+![SciPy](https://img.shields.io/badge/SciPy-8CAAE6?style=flat-square&logo=scipy&logoColor=white)
+![NumPy](https://img.shields.io/badge/NumPy-013243?style=flat-square&logo=numpy&logoColor=white)
 
-## Project Structure
+A focused Python implementation of **Markowitz mean-variance portfolio optimization** — it computes
+risk-adjusted optimal asset weights (Sharpe maximization) and plots the **efficient frontier** using
+SciPy's constrained optimizer.
+
+> A compact, single-script implementation (`optimization.py`) — not a web app. It's the math core
+> you'd drop behind a dashboard like [Veltrix](https://github.com/VenkataVinesh/Veltrix).
+
+![Efficient frontier](efficient_frontier.png)
+
+## Run
+```bash
+pip install -r requirements.txt
+python optimization.py   # generates synthetic returns, solves weights, saves efficient_frontier.png
 ```
-Portfolio-Optimization-Dashboard/
-├── optimization.py       # Markowitz optimization calculators
-├── requirements.txt      # Numerical dependencies
-└── README.md             # This setup guide
-```
 
-## Setup & Running
+## Math
+- Portfolio return $\mu_p = w^\top\mu$, volatility $\sigma_p = \sqrt{w^\top\Sigma w}$.
+- Objective: $\min_w\ -\dfrac{w^\top\mu - R_f}{\sqrt{w^\top\Sigma w}}$
+  s.t. $\sum_i w_i = 1,\ w_i \ge 0$ (long-only).
 
-1. Install numerical dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-2. Run calculations (generates synthetic asset price returns, computes optimal risk-adjusted weights, and plots the Efficient Frontier):
-   ```bash
-   python optimization.py
-   ```
-3. The script will output the optimal asset allocation weights in your console and save `efficient_frontier.png`.
-
-## Core Mathematical Models
-- **Mean Portfolio Return:** $\mu_p = w^T \mu$
-- **Portfolio Volatility:** $\sigma_p = \sqrt{w^T \Sigma w}$
-- **Objective Function:** Minimize negative Sharpe Ratio:
-  $$\min_{w} \quad - \frac{w^T \mu - R_f}{\sqrt{w^T \Sigma w}}$$
-  subject to $\sum w_i = 1.0$ and $w_i \ge 0.0$ (no short selling).
+## Why
+To implement the Markowitz formulation end-to-end with a real numerical solver (SciPy `minimize`,
+SLSQP) rather than a closed-form shortcut — and to see the efficient frontier emerge from the
+covariance structure of the returns.
