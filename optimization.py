@@ -1,91 +1,112 @@
+"""Markowitz mean-variance optimisation, long-only, solved numerically with SciPy SLSQP.
+
+    python optimization.py      # prints max-Sharpe weights, writes efficient_frontier.png
+
+The returns are SYNTHETIC (seeded), so the numbers illustrate the method, not a market.
+"""
+from __future__ import annotations
+
 import numpy as np
-import pandas as pd
 import scipy.optimize as sco
-import matplotlib.pyplot as plt
 
-def generate_synthetic_returns(num_assets=5, num_periods=252):
-    np.random.seed(42)
-    # Generate random expected returns and standard deviations
-    mean_returns = np.random.uniform(0.05, 0.20, num_assets)
-    volatilities = np.random.uniform(0.10, 0.30, num_assets)
-    
-    # Create random covariance matrix
-    corr_matrix = np.random.uniform(-0.1, 0.4, (num_assets, num_assets))
-    np.fill_diagonal(corr_matrix, 1.0)
-    # Make symmetric positive-definite
-    corr_matrix = np.dot(corr_matrix, corr_matrix.T)
-    corr_matrix = corr_matrix / np.max(np.abs(corr_matrix))
-    np.fill_diagonal(corr_matrix, 1.0)
-    
-    cov_matrix = np.diag(volatilities) @ corr_matrix @ np.diag(volatilities)
-    
-    return mean_returns, cov_matrix
+RISK_FREE = 0.02
 
-def portfolio_performance(weights, mean_returns, cov_matrix):
-    returns = np.sum(mean_returns * weights)
-    volatility = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
-    return returns, volatility
 
-def max_sharpe_ratio(mean_returns, cov_matrix, risk_free_rate=0.02):
-    num_assets = len(mean_returns)
-    
-    def negative_sharpe(weights):
-        p_return, p_vol = portfolio_performance(weights, mean_returns, cov_matrix)
-        return -(p_return - risk_free_rate) / p_vol
-        
-    constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1.0})
-    bounds = tuple((0.0, 1.0) for _ in range(num_assets))
-    init_guess = num_assets * [1.0 / num_assets]
-    
-    results = sco.minimize(negative_sharpe, init_guess, method='SLSQP', bounds=bounds, constraints=constraints)
-    return results
+def synthetic_market(num_assets: int = 5, seed: int = 42) -> tuple[np.ndarray, np.ndarray]:
+    """Annualised expected returns and a covariance matrix that is positive-definite by construction.
 
-def compute_efficient_frontier(mean_returns, cov_matrix, num_portfolios=200):
-    num_assets = len(mean_returns)
-    
-    # Calculate random portfolios for visualization
-    results = np.zeros((3, num_portfolios))
-    for i in range(num_portfolios):
-        weights = np.random.random(num_assets)
-        weights /= np.sum(weights)
-        p_ret, p_vol = portfolio_performance(weights, mean_returns, cov_matrix)
-        results[0, i] = p_vol
-        results[1, i] = p_ret
-        results[2, i] = (p_ret - 0.02) / p_vol
-        
-    return results
+    Covariance = B B^T + D (one-factor model plus idiosyncratic variance), which is PD for any
+    loadings B and strictly positive D. The previous version rescaled a random correlation
+    matrix and reset its diagonal, which can produce a matrix that is not PSD.
+    """
+    rng = np.random.default_rng(seed)
+    mean_returns = rng.uniform(0.05, 0.20, num_assets)
+    loadings = rng.uniform(0.05, 0.20, (num_assets, 1))
+    idio = rng.uniform(0.10, 0.25, num_assets) ** 2
+    cov = loadings @ loadings.T + np.diag(idio)
+    return mean_returns, cov
 
-def run_calculations():
-    assets = ['Asset_A', 'Asset_B', 'Asset_C', 'Asset_D', 'Asset_E']
-    mean_returns, cov_matrix = generate_synthetic_returns(len(assets))
-    
-    # Optimize portfolio
-    opt_results = max_sharpe_ratio(mean_returns, cov_matrix)
-    opt_weights = opt_results.x
-    opt_return, opt_vol = portfolio_performance(opt_weights, mean_returns, cov_matrix)
-    opt_sharpe = (opt_return - 0.02) / opt_vol
-    
-    print("Optimization convergence successful:")
-    for asset, weight in zip(assets, opt_weights):
-        print(f"-> {asset} Allocation: {weight * 100:.2f}%")
-    print(f"-> Portfolio Expected Return: {opt_return * 100:.2f}%")
-    print(f"-> Portfolio Volatility: {opt_vol * 100:.2f}%")
-    print(f"-> Sharpe Ratio: {opt_sharpe:.4f}")
-    
-    # Plot frontier
-    frontier_data = compute_efficient_frontier(mean_returns, cov_matrix)
-    
-    plt.figure(figsize=(10, 5))
-    plt.scatter(frontier_data[0], frontier_data[1], c=frontier_data[2], cmap='viridis', marker='o', s=15, alpha=0.3)
-    plt.colorbar(label='Sharpe Ratio')
-    plt.scatter(opt_vol, opt_return, color='red', marker='*', s=200, label='Max Sharpe Allocation')
-    plt.title('Efficient Frontier Volatility Bounds')
-    plt.xlabel('Volatility (Risk)')
-    plt.ylabel('Expected Return')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig('efficient_frontier.png')
-    print("Saved efficiently plotted boundary frontier to efficient_frontier.png")
+
+def performance(w: np.ndarray, mu: np.ndarray, cov: np.ndarray) -> tuple[float, float]:
+    return float(w @ mu), float(np.sqrt(w @ cov @ w))
+
+
+def sharpe(w: np.ndarray, mu: np.ndarray, cov: np.ndarray, rf: float = RISK_FREE) -> float:
+    ret, vol = performance(w, mu, cov)
+    return (ret - rf) / vol
+
+
+def _solve(objective, n: int, extra_constraints=()) -> np.ndarray:
+    constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}, *extra_constraints]
+    res = sco.minimize(
+        objective, np.full(n, 1.0 / n), method="SLSQP",
+        bounds=[(0.0, 1.0)] * n, constraints=constraints, options={"ftol": 1e-12, "maxiter": 500},
+    )
+    if not res.success:
+        raise RuntimeError(res.message)
+    return res.x
+
+
+def max_sharpe(mu: np.ndarray, cov: np.ndarray, rf: float = RISK_FREE) -> np.ndarray:
+    return _solve(lambda w: -sharpe(w, mu, cov, rf), len(mu))
+
+
+def min_variance(mu: np.ndarray, cov: np.ndarray) -> np.ndarray:
+    return _solve(lambda w: w @ cov @ w, len(mu))
+
+
+def efficient_frontier(mu: np.ndarray, cov: np.ndarray, points: int = 40) -> np.ndarray:
+    """Long-only efficient frontier: min variance for each target return.
+
+    Returns an array of shape (points, 2) with columns (volatility, return), from the
+    minimum-variance portfolio up to the highest-return asset.
+    """
+    lo = performance(min_variance(mu, cov), mu, cov)[0]
+    targets = np.linspace(lo, mu.max(), points)
+    out = []
+    for t in targets:
+        w = _solve(lambda w: w @ cov @ w, len(mu), ({"type": "eq", "fun": lambda w, t=t: w @ mu - t},))
+        out.append(performance(w, mu, cov)[::-1])
+    return np.array(out)
+
+
+def main() -> None:
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    assets = ["A", "B", "C", "D", "E"]
+    mu, cov = synthetic_market(len(assets))
+    w = max_sharpe(mu, cov)
+    ret, vol = performance(w, mu, cov)
+    print("Max-Sharpe portfolio (synthetic data, long-only):")
+    for a, x in zip(assets, w):
+        print(f"  {a}: {x:6.2%}")
+    print(f"  expected return {ret:.2%}  volatility {vol:.2%}  Sharpe {sharpe(w, mu, cov):.3f}")
+
+    frontier = efficient_frontier(mu, cov)
+    rng = np.random.default_rng(0)
+    cloud = rng.dirichlet(np.ones(len(mu)), 2000)
+    cloud_perf = np.array([performance(x, mu, cov) for x in cloud])
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.scatter(cloud_perf[:, 1], cloud_perf[:, 0], s=4, c="#bbbbbb", label="2,000 random long-only portfolios")
+    ax.plot(frontier[:, 0], frontier[:, 1], color="#2b6cb0", lw=2, label="efficient frontier (SLSQP)")
+    ax.scatter(np.sqrt(np.diag(cov)), mu, color="#444", marker="x", label="single assets")
+    ax.scatter(vol, ret, color="#c53030", marker="*", s=220, zorder=5, label=f"max Sharpe ({sharpe(w, mu, cov):.2f})")
+    xs = np.linspace(0, frontier[:, 0].max(), 2)
+    ax.plot(xs, RISK_FREE + sharpe(w, mu, cov) * xs, color="#c53030", lw=0.8, ls="--", label="capital market line")
+    ax.set_xlabel("volatility (annualised)")
+    ax.set_ylabel("expected return (annualised)")
+    ax.set_title("Markowitz efficient frontier, long-only (synthetic returns)")
+    ax.xaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.0%}"))
+    ax.legend(loc="lower right", fontsize=8)
+    ax.grid(alpha=0.3)
+    fig.tight_layout()
+    fig.savefig("efficient_frontier.png", dpi=120)
+    print("saved efficient_frontier.png")
+
 
 if __name__ == "__main__":
-    run_calculations()
+    main()
